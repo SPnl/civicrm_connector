@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<openerp>
+    <data>
+
+        <record id="view_civicrm_backend_form" model="ir.ui.view">
+            <field name="name">civicrm.backend.form</field>
+            <field name="model">civicrm.backend</field>
+            <field name="arch" type="xml">
+                <form string="CiviCRM Backend" version="7.0">
+                    <header>
+                    </header>
+
+                    <sheet sting="CiviCRM Connector">
+                    <label for="name" class="oe_edit_only"/>
+                    <h1>
+                        <field name="name" class="oe_inline" />
+                    </h1>
+
+                        <group string="CiviCRM Import Configuration">
+                            <group>
+                                <field name="version"/>
+                                <field name="url"/>
+                                <field name="username"/>
+                                <field name="password"/>
+                            </group>
+                            <group>
+                                <field name="site_key"/>
+                                <field name="api_key"/>
+                            </group>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="view_civicrm_backend_tree" model="ir.ui.view">
+            <field name="name">civicrm.backend.tree</field>
+            <field name="model">civicrm.backend</field>
+            <field name="arch" type="xml">
+                <tree string="civicrm Backend" version="7.0">
+                    <field name="name"/>
+                </tree>
+            </field>
+        </record>
+
+        <record id="action_civicrm_import_backend" model="ir.actions.act_window">
+            <field name="name">Civicrm Backends</field>
+            <field name="res_model">civicrm.backend</field>
+            <field name="view_type">form</field>
+            <field name="view_mode">tree,form</field>
+            <field name="view_id" ref="view_civicrm_backend_tree"/>
+        </record>
+
+    <menuitem
+        id="menu_connector_civicrm_root"
+        parent="connector.menu_connector_root"
+        name="CiviCRM Connector"
+        groups="connector.group_connector_manager"/>
+
+    <menuitem
+        id="menu_connector_civicrm_backend"
+        name="Backends"
+        parent="menu_connector_civicrm_root"
+        action="action_civicrm_import_backend"/>
+
+</data>
+</openerp>

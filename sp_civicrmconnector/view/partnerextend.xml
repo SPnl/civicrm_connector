@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<openerp>
+    <data>
+        <record id="partner_record_id" model="ir.ui.view">
+            <field name="name">res.partner.position.connector_form</field>
+            <field name="model">res.partner.position</field>
+            <field name="inherit_id" ref="contract_distribution.view_res_partner_position_form"/>
+            <field name="arch" type="xml">
+                <field name="analytic_id" position="after">
+                    <field name="backend_id" groups="connector.group_connector_manager"/>
+                </field>
+            </field>
+        </record>
+
+        <record id="partner_position_appointment_civicrm_id" model="ir.ui.view">
+            <field name="name">res.partner.position.appointment.connector_form</field>
+            <field name="model">res.partner.position.appointment</field>
+            <field name="inherit_id" ref="contract_distribution.view_res_partner_position_appointment_form"/>
+            <field name="arch" type="xml">
+                <field name="location_type_id" position="after">
+                    <field name="civicrm_relationshiptype" />
+                    <field name="civicrm_relation" />
+                </field>
+            </field>
+        </record>
+
+        <record id="partner_civi_id" model="ir.ui.view">
+            <field name="name">res.partner.civi_form</field>
+            <field name="model">res.partner</field>
+            <field name="inherit_id" ref="base.view_partner_form"/>
+            <field name="arch" type="xml">
+                <field name="title" position="after">
+                    <field name="civicrm_id" groups="connector.group_connector_manager"/>
+                    <label for="get_civicrm_link" string="CiviCRM" class="oe_inline" />
+                    <button name="get_civicrm_link" string="Bekijk in CiviCRM"
+                            class="oe_link oe_inline" type="object"/>
+
+                </field>
+            </field>
+        </record>
+
+
+    </data>
+</openerp>
