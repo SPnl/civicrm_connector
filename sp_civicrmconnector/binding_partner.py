@@ -40,6 +40,8 @@ class civicrm_res_partner(orm.Model):
 
     _columns = {
         'civicrm_id': fields.integer('ID on Civicrm'),
+        'retourpost': fields.boolean('Retourpost'),
+        
     }
     _sql_constraints = [
         ('civicrm_id_uniq', 'unique(civicrm_id)', 'The civicrm ID must be unique.')

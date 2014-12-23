@@ -30,11 +30,13 @@
             <field name="inherit_id" ref="base.view_partner_form"/>
             <field name="arch" type="xml">
                 <field name="title" position="after">
-                    <field name="civicrm_id" groups="connector.group_connector_manager"/>
+                    <field name="civicrm_id" />
                     <label for="get_civicrm_link" string="CiviCRM" class="oe_inline" />
                     <button name="get_civicrm_link" string="Bekijk in CiviCRM"
                             class="oe_link oe_inline" type="object"/>
-
+                </field>
+                <field name="opt_out" position="after">
+                    <field name="retourpost"/>
                 </field>
             </field>
         </record>
