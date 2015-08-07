@@ -20,12 +20,15 @@
 #
 ##############################################################################
 
-
-from openerp.osv import orm, fields
+from openerp.osv import orm, fields, osv
 from openerp.tools.translate import _
 from openerp import netsvc
 from datetime import datetime
 from lxml import etree
+import collections
+
+import logging
+LOGGER = logging.getLogger(__name__)
 
 def checksum(number):
     """
@@ -37,10 +40,10 @@ def checksum(number):
     :param number: String of numbers to convert to valid betalingskenmerk
     :return: 16 digit long string with a valid betalingskenmerk
     """
- 
+
     # First, pad the number with zeroes:
     number = (15 - len(number)) * '0' + number
- 
+
     # Multiply the numbers from right to left with the repeating range: 2, 4, 8, 5, 10, 9, 7, 3, 6, 1
     # (Yes, this is the non-pythonic way, but it works.
     weightedsum = 0
@@ -59,7 +62,7 @@ def checksum(number):
     weightedsum += int(number[2]) * 8
     weightedsum += int(number[1]) * 5
     weightedsum += int(number[0]) * 10
- 
+
     # Generate checksum digit
     controlegetal = 11 - (weightedsum % 11)
     if controlegetal == 10:
@@ -68,7 +71,7 @@ def checksum(number):
         controlegetal = '0'
     else:
         controlegetal = str(controlegetal)
- 
+
     number = ''.join((controlegetal, number))
     return number
 
@@ -457,42 +460,143 @@ class banking_export_sdd_wizard(orm.TransientModel):
         return {'type': 'ir.actions.act_window_close'}
 
     def save_sepa(self, cr, uid, ids, context=None):
-        '''
-        Save the SEPA Direct Debit file: mark all payments in the file
-        as 'sent'. Write 'last debit date' on mandate and set oneoff
-        mandate to expired
-        '''
+        """
+        Aanpassing nav traagheid en idee van natuurpunt/fabian
+
+         1. Write state sent
+         2. move 1 aanmaken & link opslaan in payment order, als deze nog niet bestaat (!)  -> sdd_move_id
+         3. per betaal regel:
+            4. too expire,, first mandate ids opslaan
+            5. validate_crm_payment, per invoice!
+            6. Add booking to 1e booking
+            7. *COMMIT*
+         8. post move 1
+         9. total amount new + rcur voor move 2 opbouwen
+            (Kan, want nieuwe mandate status nog niet geschreven)
+        10. make & post move 2
+        11. flag ssd payment requested on the invoice
+        12. nieuwe status mandate_ids wegschrijven
+        13. Workflow state to done
+        return, and commit to database
+        """
+        if context is None: context = {}
+
+        mv_obj = self.pool.get('account.move')
+
         sepa_export = self.browse(cr, uid, ids[0], context=context)
-        print 'sepa_export context:',context
+        LOGGER.info('sepa_export context:' + str(context))
+
+        # Stap 1
         self.pool.get('banking.export.sdd').write(
             cr, uid, sepa_export.file_id.id, {'state': 'sent'},
             context=context)
         wf_service = netsvc.LocalService('workflow')
         for order in sepa_export.payment_order_ids:
-            wf_service.trg_validate(uid, 'payment.order', order.id, 'done', cr)
-            mandate_ids = [line.sdd_mandate_id.id for line in order.line_ids]
-            self.pool['sdd.mandate'].write(
-                cr, uid, mandate_ids,
-                {'last_debit_date': datetime.today().strftime('%Y-%m-%d')},
-                context=context)
             to_expire_ids = []
             first_mandate_ids = []
+
+            mandate_ids = [line.sdd_mandate_id.id for line in order.line_ids]
+            old_mandate_info = {}
+            Mandateinformation = collections.namedtuple('Mandateinformation', 'mandate_id mandate_type partner_id line_id')
+
             for line in order.line_ids:
+                old_mandate_info[line.partner_id.id] = Mandateinformation(
+                    mandate_id=line.sdd_mandate_id.id,
+                    mandate_type=line.sdd_mandate_id.recurrent_sequence_type,
+                    partner_id=line.sdd_mandate_id.partner_id.id,
+                    line_id=line.id, )
+
+            line_nbr = len(order.line_ids)
+
+            if not order.sdd_move_id:
+                # If we do not have a ssd move, create one.
+                sdd_move_id = self._create_batch_booking(cr, uid, order, context=context)
+                LOGGER.info("New sdd_move_id id %s" % (sdd_move_id,))
+            else:
+                sdd_move_id = order.sdd_move_id.id
+                LOGGER.info("sdd_move_id already in database: id: %s, reference: %s" % (sdd_move_id, order.sdd_move_id.ref,))
+            # cr.commit()
+            # We have created the ordermove, reload order
+            order = self.pool.get('payment.order').browse(cr, uid, order.id, context=context)
+            # Stap 4 - To expire mandaad id's opslaan
+            amount_first = 0.0
+            amount_rcur = 0.0
+            total_amount = 0.0
+            for line in order.line_ids:
+                total_amount += line.amount_currency
                 if line.sdd_mandate_id.type == 'oneoff':
                     to_expire_ids.append(line.sdd_mandate_id.id)
+                    amount_rcur += line.amount_currency
                 elif line.sdd_mandate_id.type == 'recurrent':
                     seq_type = line.sdd_mandate_id.recurrent_sequence_type
                     if seq_type == 'final':
+                        amount_rcur += line.amount_currency
                         to_expire_ids.append(line.sdd_mandate_id.id)
                     elif seq_type == 'first':
+                        amount_first += line.amount_currency
                         first_mandate_ids.append(line.sdd_mandate_id.id)
-            self.pool['sdd.mandate'].write(
-                cr, uid, to_expire_ids, {'state': 'expired'}, context=context)
-            self.pool['sdd.mandate'].write(
-                cr, uid, first_mandate_ids, {
-                    'recurrent_sequence_type': 'recurring',
-                    'sepa_migrated': True,
-                }, context=context)
+                    elif seq_type == 'recurring':
+                        amount_rcur += line.amount_currency
+
+                # Stap 5 - validate_crm_payment per invoice
+                if line.ml_inv_ref:
+                    LOGGER.info("invoice %s status: %s" % (line.ml_inv_ref.number, line.ml_inv_ref.state))
+                    if line.ml_inv_ref.state == 'open':
+                        # Stap 5 - validate_crm_payment, per invoice!
+                        # Doet ook Stap 6, add booking to sdd_move_id
+                        inv = self.pool.get('account.invoice').validate_crm_payment(cr, uid, [line.ml_inv_ref.id], order, context=context)
+                    else:
+                        LOGGER.info('Invoice %s is already paid' % (line.ml_inv_ref.number,))
+                    line_nbr -= 1
+                    # Stap 7 -- *commit* to database so we can restart in case of errors
+                    cr.commit()
+
+                    LOGGER.info('Direct Debit Order %s invoice preocessed : %s' % (order.id, line.ml_inv_ref.number))
+                LOGGER.info('Direct Debit Order %s lines left to process : %s' % (order.id, line_nbr))
+            if line_nbr >= 1:
+                raise osv.except_osv(_('Error!'), _('There are errors in this payment batch'))
+
+            # If everything is alright, validate!
+            # World! The time has come to push the button.
+            # Push the validate Button!
+            # mv_obj.button_validate(cr, uid, [order.sdd_move_id.id], context=context)
+            # Of niet, want we willen alles in concept houden.. :)
+
+            # Stap 9, create moves for first and rcurring mandates
+            # Store amount for booking from paymant journal to new journal
+
+            if total_amount != (amount_first + amount_rcur):
+                raise orm.except_orm(
+                    _('Error:'),
+                    "Totale bedrag (%d), komt niet overeen met currurring (%d) en first (%d) bedrag!" % (
+                        total_amount, amount_rcur, amount_first))
+            if total_amount != order.total:
+                    raise orm.except_orm(
+                    _('Error:'),
+                    "Totale bedrag (%d), komt niet overeen met order total (%d)!" % (
+                        total_amount, order.total))
+
+            context['journal_id'] = order.mode.transfer_journal_id.id
+            context['sale_order_reference'] = order.reference
+            invoice_ids = []
+            for lines in order.line_ids:
+                if lines.ml_inv_ref:
+                    invoice_ids.append(lines.ml_inv_ref.id)
+
+            # After the validated invoices, create two new bookings to the incasso debit account and journal
+            LOGGER.info("Creating move for first amount: %s" % (amount_first,))
+            if amount_first > 0.0:
+                debit_move_first = self.create_debit_move(cr, uid, order, amount_first, "FRST", context=context)
+                LOGGER.info("move voor first %s" % (debit_move_first,))
+                result = self.createreconcile(cr, uid, order, debit_move_first, sdd_move_id, old_mandate_info, type="FRST", context=context)
+                self.pool.get('payment.order').write(cr, uid, order.id, {'first_move_id': debit_move_first}, context=context)
+
+            LOGGER.info("Creating move for recurring amount: %s" % (amount_rcur,))
+            if amount_rcur > 0.0:
+                debit_move_rcur = self.create_debit_move(cr, uid, order, amount_rcur, "RCUR", context=context)
+                LOGGER.info("move voor rcur %s" % (debit_move_rcur,))
+                result = self.createreconcile(cr, uid, order, debit_move_rcur, sdd_move_id, old_mandate_info, type="RCUR", context=context)
+                self.pool.get('payment.order').write(cr, uid, order.id, {'rcur_move_id': debit_move_rcur}, context=context)
 
 
             #Set the flag ssd payment requested on the invoice
@@ -503,4 +607,158 @@ class banking_export_sdd_wizard(orm.TransientModel):
             print "invoice_ids:",invoice_ids
             self.pool.get('account.invoice').write(cr, uid, invoice_ids, {'sdd_payment_sent':True})
 
+            self.pool['sdd.mandate'].write(cr, uid, to_expire_ids, {'state': 'expired'}, context=context)
+            self.pool['sdd.mandate'].write(cr, uid, first_mandate_ids,
+                                           {'recurrent_sequence_type': 'recurring', 'sepa_migrated': True, },
+                                           context=context)
+            mandate_ids = [line.sdd_mandate_id.id for line in order.line_ids]
+            self.pool['sdd.mandate'].write(
+                cr, uid, mandate_ids,
+                {'last_debit_date': datetime.today().strftime('%Y-%m-%d')},
+                context=context)
+            wf_service.trg_validate(uid, 'payment.order', order.id, 'done', cr)
+
+            LOGGER.info('Direct Debit Order %s processed' % (order.id,))
+
+
+        # raise "Ik wil nog neit committen error :)"
+
         return {'type': 'ir.actions.act_window_close'}
+
+    def _create_batch_booking(self, cr, uid, order, context=None):
+        move_pool = self.pool.get('account.move')
+        local_ctx = dict(context or {}, account_period_prefer_normal=True)
+        seq_obj = self.pool.get('ir.sequence')
+
+        context['journal_id'] = order.mode.debit_journal_id.id
+
+        date_sent = order.date_created
+        period_id = self.pool.get('account.period').find(cr, uid, dt=date_sent, context=local_ctx)
+
+        if len(period_id) != 1:
+            raise osv.except_osv(_('Configuration Error !'), _('More then one period found for this date'))
+
+        period_id = period_id[0]
+        period_obj = self.pool.get('account.period').browse(cr, uid, period_id, context=local_ctx)
+
+        if order.mode.transfer_journal_id.sequence_id:
+            if not order.mode.debit_journal_id.sequence_id.active:
+                raise osv.except_osv(_('Configuration Error !'),
+                                     _('Please activate the sequence of selected journal !'))
+            c = dict(context)
+            c.update({'fiscalyear_id': period_obj.fiscalyear_id.id})
+            name = seq_obj.next_by_id(cr, uid, order.mode.debit_journal_id.sequence_id.id, context=c)
+        else:
+            raise osv.except_osv(_('Error!'),
+                                 _('Please define a sequence on the journal.'))
+        mv_vals = {
+            'journal_id': order.mode.transfer_journal_id.id,
+            'date': order.date_created,
+            'company_id': order.company_id.id,
+            'ref': order.reference,
+            'period_id': period_id,
+        }
+
+        move_id = move_pool.create(cr, uid, mv_vals, context=context)
+        self.pool.get('payment.order').write(cr, uid, order.id, {'sdd_move_id': move_id}, context=context)
+
+        return move_id
+
+    def create_debit_move(self, cr, uid, order, amount, postfix = "", context=None):
+        """
+         Create debit move from Overschrijf rekening to incaso debit account
+        """
+        if context is None:
+            context = {}
+        local_ctx = dict(context or {}, account_period_prefer_normal=True)
+        move_pool = self.pool.get('account.move')
+        seq_obj = self.pool.get('ir.sequence')
+
+        date_sent = order.date_created
+
+        period_id = self.pool.get('account.period').find(cr, uid, dt=date_sent, context=local_ctx)
+
+        if len(period_id) != 1:
+            raise osv.except_osv(_('Configuration Error !'), _('More then one period found for this date'))
+
+        period_id = period_id[0]
+        period_obj = self.pool.get('account.period').browse(cr, uid, period_id, context=local_ctx)
+
+        if order.mode.debit_journal_id.sequence_id:
+            if not order.mode.debit_journal_id.sequence_id.active:
+                raise osv.except_osv(_('Configuration Error !'),
+                                     _('Please activate the sequence of selected journal !'))
+
+            c = dict(context)
+            c.update({'fiscalyear_id': period_obj.fiscalyear_id.id})
+            name = seq_obj.next_by_id(cr, uid, order.mode.debit_journal_id.sequence_id.id, context=c)
+        else:
+            raise osv.except_osv(_('Error!'),
+                                 _('Please define a sequence on the journal.'))
+
+        ref = order.reference + "-" + postfix + '-' +  order.line_ids[0].date.replace('-', '') + '-' + order.line_ids[0].priority
+
+        lines = [
+            {
+                'name': "Incasso boeking: " + ref,
+                'quantity': 1,
+                'account_id': order.mode.debit_account_id.id,
+                'ref': ref,
+                'date': date_sent,
+                'debit': amount,
+            },
+            {
+                'name': "Incasso boeking: " + ref,
+                'quantity': 1,
+                'account_id': order.mode.transfer_account_id.id,
+                'ref': ref,
+                'date': date_sent,
+                'credit': amount,
+            }
+        ]
+
+        move = {
+            'name': name,
+            'journal_id': order.mode.debit_journal_id.id,
+            'date': date_sent,
+            'ref': ref,
+            'period_id': period_id,
+            'line_id': [(0, 0, line) for line in lines],
+        }
+        move_id = move_pool.create(cr, uid, move, context=context)
+        return move_id
+
+    def createreconcile(self, cr, uid, order, credit_move_line_id, debit_move_line_id, old_mandate_info, type, context=None):
+        """
+            En nu het afletteren van de regels uit bovenstaande move's:
+            We hebben nu één OF twee boekingen van 1420 Incasso's onderweg naar 1305 Incasso's te ontvangen
+            In deze boeking zit een dus een regel van 1420, en een regel naar 1305
+            De credit regel van 1420 is af te letteren tegenover te losse boekingsregels op 1420
+            Maar, moeten wel gesplist worden op new en rcur.
+            Deze splitsing kunnen we uit old_mandate_info halen
+
+            :type RCUR of FRST
+        """
+        if context is None:
+            context = {}
+        move_line_pool = self.pool.get('account.move.line')
+        move_pool = self.pool.get('account.move')
+
+        # Credit boeking
+        move_line_credit_ids = move_line_pool.search(cr, uid, [('move_id', '=', credit_move_line_id), ('account_id', '=', order.mode.transfer_account_id.id)], context=context)
+
+        # Debit boekingen, dus alle boekingsregels van deze move van type
+        move_line_debit_ids = move_line_pool.search(cr, uid, [('move_id', '=', debit_move_line_id), ('account_id', '=', order.mode.transfer_account_id.id)], context=context)
+        move_lines_debit = move_line_pool.browse(cr, uid, move_line_debit_ids, context=context)
+
+        found_move_lines_debit = []
+        for move_line in move_lines_debit:
+            if type == "FRST" and old_mandate_info[move_line.partner_id.id].mandate_type == "first":
+                found_move_lines_debit.append(move_line.id)
+            elif type == "RCUR" and old_mandate_info[move_line.partner_id.id].mandate_type == "recurring":
+                found_move_lines_debit.append(move_line.id)
+
+        rec_ids = move_line_credit_ids + found_move_lines_debit
+        reconcile = move_line_pool.reconcile(cr, uid, rec_ids, context=context)
+
+        return reconcile

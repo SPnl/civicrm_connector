@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<openerp>
+    <data>
+
+        <!--
+             Add the payment mode type and transfer settings for debit booking
+        -->
+        <record id="view_payment_mode_form_inherit_debit" model="ir.ui.view">
+            <field name="name">payment.mode.form.inherit.debit</field>
+            <field name="model">payment.mode</field>
+            <field name="inherit_id" ref="account_banking_payment.view_payment_mode_form_inherit"/>
+            <field name="arch" type="xml">
+                <field name="transfer_journal_id" position="after">
+                            <field name="debit_account_id"
+                                   domain="[('type', '=', 'receivable'),
+                                           ('reconcile', '=', True),
+                                           ('company_id', '=', company_id)]"
+                                   context="{
+                                       'default_type': 'other',
+                                       'default_reconcile': True,
+                                       'default_company_id': company_id}"
+                                   />
+                            <field name="debit_journal_id"
+                                   domain="[('company_id', '=', company_id)]"
+                                   />
+                </field>
+            </field>
+        </record>
+
+    </data>
+</openerp>

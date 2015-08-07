@@ -20,8 +20,18 @@
 #
 ##############################################################################
 
-from . import company
-from . import wizard
-from . import account_banking_sdd
-from . import account_journal
-from . import payment_mode
+
+from openerp.osv import orm, fields
+from openerp import netsvc
+
+class payment_mode(orm.Model):
+    _inherit = 'payment.mode'
+    _columns = {
+        'debit_account_id': fields.many2one(
+            'account.account', 'Incasso debit account',
+            domain=[('type', '=', 'receivable'),
+                    ('reconcile', '=', True)],
+        ),
+        'debit_journal_id': fields.many2one(
+            'account.journal', 'Incasso debit account', ),
+    }

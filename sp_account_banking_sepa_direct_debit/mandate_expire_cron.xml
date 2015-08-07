@@ -11,7 +11,7 @@
 <data noupdate="1"> <!-- noupdate = 1 for the 'active' field -->
 <record id="sdd_mandate_expire_cron" model="ir.cron">
     <field name="name">Set SEPA Direct Debit Mandates to Expired</field>
-    <field name="active" eval="True"/>
+    <field name="active" eval="False"/>
     <field name="user_id" ref="base.user_root"/>
     <field name="interval_number">1</field>
     <field name="interval_type">days</field>
