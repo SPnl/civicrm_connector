@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<openerp>
+    <data>
+        <record id="view_paymentorder_marker" model="ir.ui.view">
+            <field name="name">Mark payment orders for batch processing</field>
+            <field name="model">wizard.direct.debit.confirm</field>
+            <field name="arch" type="xml">
+                <form string="Mark payment orders for batch processing" version="7.0">
+                    <group colspan="4">
+                        <field name="action"/>
+                        <field name="eta"/>
+                    </group>
+                    <group>
+                        <field name="payment_ids" nolabel="1" colpspan="4"/>
+                    </group>
+                    <footer>
+                        <button name="button_mark" string="Mark" type="object" default_focus="1" class="oe_highlight"/>
+                        or
+                        <button string="Cancel" class="oe_link" special="cancel" />
+                    </footer>
+                </form>
+            </field>
+        </record>
+
+        <act_window id="action_paymentorder_marker"
+                    name="Mark for batch processing"
+                    src_model="payment.order"
+                    res_model="wizard.direct.debit.confirm"
+                    key2="client_action_multi"
+                    view_mode="form"
+                    view_type="form"
+                    view_id="view_paymentorder_marker"
+                    target="new"
+                />
+    </data>
+</openerp>
