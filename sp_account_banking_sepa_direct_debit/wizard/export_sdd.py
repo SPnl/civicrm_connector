@@ -556,7 +556,7 @@ class banking_export_sdd_wizard(orm.TransientModel):
                             LOGGER.info('Invoice %s is already paid' % (line.ml_inv_ref.number,))
                         line_nbr -= 1
                         # Stap 7 -- *commit* to database so we can restart in case of errors
-                        line_obj.write(cr, uid, line.id, {'sdd_state': 'done'})
+                        line_obj.write(cr, uid, line.id, {'sdd_state': '3-done'})
                         cr.commit()
 
                         LOGGER.info('Direct Debit Order %s invoice preocessed : %s' % (order.id, line.ml_inv_ref.number))
@@ -567,7 +567,7 @@ class banking_export_sdd_wizard(orm.TransientModel):
                     try:
                         # Update the error directly in the database.
                         # We cannot use the normal Odoo ways because we raised an error.
-                        cr.execute("""UPDATE payment_line SET sdd_state = 'fail' where id =%s""", (line.id,))
+                        cr.execute("""UPDATE payment_line SET sdd_state = '1-fail' where id =%s""", (line.id,))
                         cr.commit()
                     except psycopg2.Error as sql_err:
                         # If we get an error here that's more fatal then normal, bailing out

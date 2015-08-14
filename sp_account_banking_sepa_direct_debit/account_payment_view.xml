@@ -21,7 +21,7 @@
             <field name="sdd_state" string="Bevestig status" invisible="context.get('default_payment_order_type')!='debit'"/>
         </xpath>
         <xpath expr="//field[@name='line_ids']/tree" position="attributes">
-            <attribute name="colors">black:sdd_state=='new'; green: sdd_state=='done'; red: sdd_state=='fail'</attribute>
+            <attribute name="colors">black:sdd_state=='2-new'; green: sdd_state=='3-done'; red: sdd_state=='1-fail'</attribute>
         </xpath>
 
     </field>
