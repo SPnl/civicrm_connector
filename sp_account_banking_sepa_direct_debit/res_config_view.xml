@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openerp>
+    <data>
+
+        <record id="view_res_config_settings" model="ir.ui.view">
+            <field name="name">base.config.settings.view</field>
+            <field name="model">base.config.settings</field>
+            <field name="inherit_id" ref="base_setup.view_general_configuration"/>
+            <field name="arch" type="xml">
+                <xpath expr="//label[@string='Email']/.." position='after'>
+                    <group>
+                        <label for="id" string="Direct debit split"/>
+                        <div>
+                            <div>
+                                <field name="split_count" class="oe_inline"/>
+                                <label for="split_count"/>
+                            </div>
+                        </div>
+                    </group>
+                </xpath>
+            </field>
+        </record>
+
+    </data>
+</openerp>

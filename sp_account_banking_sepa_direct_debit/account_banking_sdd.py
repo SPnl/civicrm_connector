@@ -21,6 +21,7 @@
 from openerp.osv import osv, orm, fields
 from openerp.tools.translate import _
 from openerp.addons.decimal_precision import decimal_precision as dp
+from openerp import SUPERUSER_ID
 from unidecode import unidecode
 from datetime import datetime
 from datetime import date
@@ -732,14 +733,17 @@ class payment_order(orm.Model):
     }
 
     def payment_order_split(self, cr, uid, ids, context=None):
+        icp_obj = self.pool['ir.config_parameter']
+
+        split_count = int(icp_obj.get_param(cr, SUPERUSER_ID, 'sp_account_banking_sepa_direct_debit.split_count', 3000))
 
         for po in self.browse(cr, uid, ids):
             line_ids = po.line_ids
             line_ids = self.read(cr, uid, [po.id], fields=['line_ids'], context=context)[0]['line_ids']
             print "LINE IDS:", line_ids
 
-            if len(line_ids) > 3000:
-                lines = map(None, *([iter(line_ids)] * 3000))
+            if len(line_ids) > split_count:
+                lines = map(None, *([iter(line_ids)] * split_count))
                 orig = True
                 for l in lines:
                     if orig:

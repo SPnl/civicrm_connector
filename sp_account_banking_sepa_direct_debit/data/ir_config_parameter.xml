@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openerp>
+    <data noupdate="1">
+
+        <record id="split_count" model="ir.config_parameter">
+            <field name="key">sp_account_banking_sepa_direct_debit.split_count</field>
+            <field name="value">3000</field>
+        </record>
+    </data>
+</openerp>

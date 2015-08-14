@@ -25,3 +25,4 @@ from . import wizard
 from . import account_banking_sdd
 from . import account_journal
 from . import payment_mode
+from . import res_config

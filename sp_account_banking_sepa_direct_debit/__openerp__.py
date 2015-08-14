@@ -24,6 +24,7 @@
     'version': '0.1',
     'license': 'AGPL-3',
     'author': 'Akretion (customized by B-Informed & Smart Solution)',
+    'website': 'http://www.b-informed.nl',
     'category': 'Banking addons',
     'depends': ['account_direct_debit', 'account_banking_pain_base', 'account_payment'],
     'external_dependencies': {
@@ -43,6 +44,8 @@
         'wizard/export_sdd_view.xml',
         'data/payment_type_sdd.xml',
         'data/mandate_reference_sequence.xml',
+        'data/ir_config_parameter.xml',
+        'res_config_view.xml',
         'security/ir.model.access.csv',
     ],
     'demo': ['sepa_direct_debit_demo.xml'],
