@@ -27,7 +27,7 @@ from openerp.osv import fields, orm
 from openerp.tools.translate import _
 from openerp import netsvc, pooler
 
-from openerp.addons.connector.queue.job import job
+from openerp.addons.connector.queue.job import job, related_action
 from openerp.addons.connector.session import ConnectorSession
 from openerp.addons.connector.queue.job import OpenERPJobStorage
 
@@ -133,7 +133,25 @@ class PaymentOrder(orm.Model):
         self._cancel_jobs(cr, uid, context=context)
 
 
+def related_action_payment_order(session, job):
+    model = job.args[0]
+    payment_id = job.args[1]
+    # eventually get the real ID if payment_id is a binding ID
+    action = {
+        'name': _("Payment order"),
+        'type': 'ir.actions.act_window',
+        'res_model': model,
+        'view_type': 'form',
+        'view_mode': 'form',
+        'res_id': payment_id,
+        'domain': [('payment_order_type', '=', 'debit')],
+        'context': {'search_payment_order_type': 'debit', 'default_payment_order_type': 'debit'},
+    }
+    return action
+
+
 @job
+@related_action(action=related_action_payment_order)
 def validate_one_payment_order(session, model_name, paymentorder_id):
     """Process a payment_order, and leave the job reference in place."""
     paymentorder_pool = session.pool['payment.order']
