@@ -183,7 +183,7 @@ class sdd_mandate(orm.Model):
 
     _columns = {
         'partner_bank_id': fields.many2one(
-            'res.partner.bank', 'Bank Account', track_visibility='onchange'),
+            'res.partner.bank', 'Bank Account', track_visibility='onchange', required=True, ondelete='restrict'),
         'partner_id': fields.related(
             'partner_bank_id', 'partner_id', type='many2one',
             relation='res.partner', string='Partner', readonly=True),
