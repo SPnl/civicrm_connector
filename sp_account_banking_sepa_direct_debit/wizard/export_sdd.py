@@ -26,7 +26,7 @@ from openerp import netsvc
 from datetime import datetime
 from lxml import etree
 import collections
-
+import psycopg2
 import logging
 LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ def checksum(number):
 
     number = ''.join((controlegetal, number))
     return number
+
 
 class banking_export_sdd_wizard(orm.TransientModel):
     _name = 'banking.export.sdd.wizard'
@@ -482,6 +483,7 @@ class banking_export_sdd_wizard(orm.TransientModel):
         if context is None: context = {}
 
         mv_obj = self.pool.get('account.move')
+        line_obj = self.pool.get('payment.line')
 
         sepa_export = self.browse(cr, uid, ids[0], context=context)
         LOGGER.info('sepa_export context:' + str(context))
@@ -515,46 +517,70 @@ class banking_export_sdd_wizard(orm.TransientModel):
             else:
                 sdd_move_id = order.sdd_move_id.id
                 LOGGER.info("sdd_move_id already in database: id: %s, reference: %s" % (sdd_move_id, order.sdd_move_id.ref,))
-            # cr.commit()
+
+            # Commit, because the first invoice could fail and then we miss the first account move
+            cr.commit()
+
             # We have created the ordermove, reload order
             order = self.pool.get('payment.order').browse(cr, uid, order.id, context=context)
             # Stap 4 - To expire mandaad id's opslaan
             amount_first = 0.0
             amount_rcur = 0.0
             total_amount = 0.0
+            confirm_errors = []
             for line in order.line_ids:
-                total_amount += line.amount_currency
-                if line.sdd_mandate_id.type == 'oneoff':
-                    to_expire_ids.append(line.sdd_mandate_id.id)
-                    amount_rcur += line.amount_currency
-                elif line.sdd_mandate_id.type == 'recurrent':
-                    seq_type = line.sdd_mandate_id.recurrent_sequence_type
-                    if seq_type == 'final':
-                        amount_rcur += line.amount_currency
+                try:
+                    total_amount += line.amount_currency
+                    if line.sdd_mandate_id.type == 'oneoff':
                         to_expire_ids.append(line.sdd_mandate_id.id)
-                    elif seq_type == 'first':
-                        amount_first += line.amount_currency
-                        first_mandate_ids.append(line.sdd_mandate_id.id)
-                    elif seq_type == 'recurring':
                         amount_rcur += line.amount_currency
+                    elif line.sdd_mandate_id.type == 'recurrent':
+                        seq_type = line.sdd_mandate_id.recurrent_sequence_type
+                        if seq_type == 'final':
+                            amount_rcur += line.amount_currency
+                            to_expire_ids.append(line.sdd_mandate_id.id)
+                        elif seq_type == 'first':
+                            amount_first += line.amount_currency
+                            first_mandate_ids.append(line.sdd_mandate_id.id)
+                        elif seq_type == 'recurring':
+                            amount_rcur += line.amount_currency
 
-                # Stap 5 - validate_crm_payment per invoice
-                if line.ml_inv_ref:
-                    LOGGER.info("invoice %s status: %s" % (line.ml_inv_ref.number, line.ml_inv_ref.state))
-                    if line.ml_inv_ref.state == 'open':
-                        # Stap 5 - validate_crm_payment, per invoice!
-                        # Doet ook Stap 6, add booking to sdd_move_id
-                        inv = self.pool.get('account.invoice').validate_crm_payment(cr, uid, [line.ml_inv_ref.id], order, context=context)
-                    else:
-                        LOGGER.info('Invoice %s is already paid' % (line.ml_inv_ref.number,))
-                    line_nbr -= 1
-                    # Stap 7 -- *commit* to database so we can restart in case of errors
-                    cr.commit()
+                    # Stap 5 - validate_crm_payment per invoice
+                    if line.ml_inv_ref:
+                        LOGGER.info("invoice %s status: %s" % (line.ml_inv_ref.number, line.ml_inv_ref.state))
+                        if line.ml_inv_ref.state == 'open':
+                            # Stap 5 - validate_crm_payment, per invoice!
+                            # Doet ook Stap 6, add booking to sdd_move_id
+                            inv = self.pool.get('account.invoice').validate_crm_payment(cr, uid, [line.ml_inv_ref.id], order, context=context)
+                        else:
+                            LOGGER.info('Invoice %s is already paid' % (line.ml_inv_ref.number,))
+                        line_nbr -= 1
+                        # Stap 7 -- *commit* to database so we can restart in case of errors
+                        line_obj.write(cr, uid, line.id, {'sdd_state': 'done'})
+                        cr.commit()
 
-                    LOGGER.info('Direct Debit Order %s invoice preocessed : %s' % (order.id, line.ml_inv_ref.number))
-                LOGGER.info('Direct Debit Order %s lines left to process : %s' % (order.id, line_nbr))
-            if line_nbr >= 1:
-                raise osv.except_osv(_('Error!'), _('There are errors in this payment batch'))
+                        LOGGER.info('Direct Debit Order %s invoice preocessed : %s' % (order.id, line.ml_inv_ref.number))
+                    LOGGER.info('Direct Debit Order %s lines left to process : %s' % (order.id, line_nbr))
+                except BaseException as e:
+                    # Confirm error for this line and mark it as failed
+                    cr.rollback()
+                    try:
+                        # Update the error directly in the database.
+                        # We cannot use the normal Odoo ways because we raised an error.
+                        cr.execute("""UPDATE payment_line SET sdd_state = 'fail' where id =%s""", (line.id,))
+                        cr.commit()
+                    except psycopg2.Error as sql_err:
+                        # If we get an error here that's more fatal then normal, bailing out
+                        cr.rollback()
+                        raise osv.except_osv(_("ORM bypass error"), sql_err.pgerror)
+                    confirm_errors.append(e)
+
+            if line_nbr >= 1 or confirm_errors:
+                error_txt = ""
+                for exception in confirm_errors:
+                    error_txt += repr(exception)
+                    error_txt += "\n\n"
+                raise osv.except_osv(_('Error!'), _('There are errors in this payment batch') + "\n" + error_txt)
 
             # If everything is alright, validate!
             # World! The time has come to push the button.
@@ -565,15 +591,15 @@ class banking_export_sdd_wizard(orm.TransientModel):
             # Stap 9, create moves for first and rcurring mandates
             # Store amount for booking from paymant journal to new journal
 
-            if total_amount != (amount_first + amount_rcur):
+            if round(total_amount,2) != round((amount_first + amount_rcur),2):
                 raise orm.except_orm(
                     _('Error:'),
-                    "Totale bedrag (%d), komt niet overeen met currurring (%d) en first (%d) bedrag!" % (
+                    "Totale bedrag (%d), komt niet overeen met currurring (%f) en first (%f) bedrag!" % (
                         total_amount, amount_rcur, amount_first))
-            if total_amount != order.total:
+            if round(total_amount, 2) != round(order.total, 2):
                     raise orm.except_orm(
                     _('Error:'),
-                    "Totale bedrag (%d), komt niet overeen met order total (%d)!" % (
+                    "Totale bedrag (%f), komt niet overeen met order total (%f)!" % (
                         total_amount, order.total))
 
             context['journal_id'] = order.mode.transfer_journal_id.id

@@ -423,11 +423,16 @@ class payment_line(orm.Model):
             domain=[('state', '=', 'valid')]),
         'struct_communication_type': fields.selection(
             _get_struct_communication_types, 'Structured Communication Type'),
-
+        'sdd_state': fields.selection([
+            ('new', 'New'),
+            ('done', 'Validated and confirmed'),
+            ('fail', 'Error with processing'),
+        ], 'Confirm state')
     }
 
     _defaults = {
         'struct_communication_type': 'CUR',
+        'sdd_state': 'new',
     }
 
     def create(self, cr, uid, vals, context=None):

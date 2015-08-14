@@ -18,7 +18,12 @@
         </xpath>
         <xpath expr="//field[@name='line_ids']/tree/field[@name='bank_id']" position="after">
             <field name="sdd_mandate_id" string="SDD Mandate" invisible="context.get('default_payment_order_type')!='debit'"/>
+            <field name="sdd_state" string="Bevestig status" invisible="context.get('default_payment_order_type')!='debit'"/>
         </xpath>
+        <xpath expr="//field[@name='line_ids']/tree" position="attributes">
+            <attribute name="colors">black:sdd_state=='new'; green: sdd_state=='done'; red: sdd_state=='fail'</attribute>
+        </xpath>
+
     </field>
 </record>
 
